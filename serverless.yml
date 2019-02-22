@@ -1,0 +1,42 @@
+service: unzip-python
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+ stage: ${opt:stage, "dev"}
+ env: ${file(./env.yml):${self:custom.stage}}
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:GetObject"
+        - "s3:PutObject"
+        - "s3:DeleteObject"
+      Resource:
+        - "arn:aws:s3:::${self:custom.env.S3_BUCKET_DEFAULT}"
+        - "arn:aws:s3:::${self:custom.env.S3_BUCKET_DEFAULT}/*"
+
+functions:
+  unzip:
+    handler: unzip.handler
+    timeout: 300
+    packRequirements: false
+    pythonRequirements:
+      dockerizePip: non-linux
+    events:
+      - s3:
+        bucket: ${self:custom.env.S3_BUCKET_DEFAULT}
+        event: s3:ObjectCreated:*
+        rules:
+          - prefix: "python/"
+          - suffix: ".zip"
+package:
+ exclude:
+   - data/**
+   - venv/**
