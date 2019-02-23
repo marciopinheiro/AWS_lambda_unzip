@@ -1,54 +1,70 @@
-import os
 import zipfile
 import boto3
 import io
-import tempfile
 
 
-def handler(event, context):
-    s3 = boto3.client('s3')
-    # bucket_name = str(event['Records'][0]['s3']['bucket']['name']).encode('utf8')
-    # key = str(event['Records'][0]['s3']['object']['key']).encode('utf8')
-
-    bucket_name = 'sls-mdtr-bucket'
-    key = 'teste/MDTR_201805.zip'
+def lambda_handler(event, context):
+    bucket_name = event['Records'][0]['s3']['bucket']['name']
+    key = event['Records'][0]['s3']['object']['key']
 
     try:
-        #obj = s3.get_object(Bucket=bucket_name, Key=key)
-        obj_body = open('data/MDTR_201805.zip').read()
-        temp_filename = os.path.join(tempfile.gettempdir(), key)
+        s3_client = boto3.client('s3')
+        response = s3_client.get_object(Bucket=bucket_name, Key=key)
 
-        with open(temp_filename, 'wb') as l_file:
-            l_file.write(obj_body.read())
+        with io.BytesIO(response["Body"].read()) as s3c:
+            with zipfile.ZipFile(s3c, mode='r') as rzipf:
+                for infile_info in rzipf.infolist():
+                    with rzipf.open(infile_info, 'r') as infile_obj:
+                        upload_to_s3(s3_client, infile_obj, infile_info,
+                                     bucket_name)
 
-        del obj_body
+        del response, s3c, rzipf
 
-        put_objects = []
-
-        with open(temp_filename).read() as tf:
-            # rewind the file
-            tf.seek(0)
-
-            # Read the file as a zipfile and process the members
-            with zipfile.ZipFile(tf, mode='r') as zipf:
-
-                for file in zipf.infolist():
-                    file_name = file.filename
-                    print(file_name)
-                    put_file = s3.put_object(Bucket=bucket_name, Key='python/' + file_name,
-                                             Body=zipf.read(file))
-                    print(put_file)
-                    put_objects.append(put_file)
-                    print(put_objects)
-
-        # Delete zip file after unzip
-        if len(put_objects) > 0:
-            # deleted_obj = s3.delete_object(Bucket=bucket_name, Key=key)
-            print('deleted file:')
-            # print(deleted_obj)
+        s3_client.delete_object(Bucket=bucket_name, Key=key)
 
     except Exception as e:
+        print(f'Error trying unzip object {key} from bucket {bucket_name}.')
         print(e)
-        print(f'Error getting object {key} from bucket {bucket_name}. '
-              f'Make sure they exist and your bucket is in the same region as this function.')
         raise e
+
+
+def upload_to_s3(s3_client, infile_obj, infile_info, bucket_name):
+    upload_chunk_size = 1024 * 1000 * 100
+    upload_parts = []
+    mpu = s3_client.create_multipart_upload(
+        Bucket=bucket_name,
+        Key='python/' + infile_info.filename)
+
+    for i, infile_part in enumerate(
+            read_in_chunks(infile_obj, upload_chunk_size)):
+        infile_part_num = i + 1
+        print(f'Uploading {infile_info.filename}: part {infile_part_num}')
+        part = s3_client.upload_part(Bucket=bucket_name,
+                                     Key='python/' + infile_info.filename,
+                                     Body=infile_part,
+                                     PartNumber=infile_part_num,
+                                     UploadId=mpu['UploadId']
+                                     )
+        upload_parts.append(part)
+
+    part_info = {
+        'Parts': [
+            {
+                'PartNumber': (i + 1),
+                'ETag': part['ETag']
+            } for i, part in enumerate(upload_parts)
+        ]
+    }
+
+    s3_client.complete_multipart_upload(Bucket=bucket_name,
+                                        Key='python/' + infile_info.filename,
+                                        UploadId=mpu['UploadId'],
+                                        MultipartUpload=part_info)
+
+
+def read_in_chunks(file_object, chunk_size):
+    while True:
+        data = file_object.read(chunk_size)
+        if not data:
+            break
+        yield data
