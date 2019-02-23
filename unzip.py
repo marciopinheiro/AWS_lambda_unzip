@@ -1,3 +1,4 @@
+import os
 import zipfile
 import boto3
 import io
@@ -6,6 +7,7 @@ import io
 def lambda_handler(event, context):
     bucket_name = event['Records'][0]['s3']['bucket']['name']
     key = event['Records'][0]['s3']['object']['key']
+    dest_folder = 'python/'
 
     try:
         s3_client = boto3.client('s3')
@@ -15,8 +17,9 @@ def lambda_handler(event, context):
             with zipfile.ZipFile(s3c, mode='r') as rzipf:
                 for infile_info in rzipf.infolist():
                     with rzipf.open(infile_info, 'r') as infile_obj:
-                        upload_to_s3(s3_client, infile_obj, infile_info,
-                                     bucket_name)
+                        upload_to_s3(client=s3_client, obj=infile_obj,
+                                     info=infile_info, bucket=bucket_name,
+                                     folder=dest_folder)
 
         del response, s3c, rzipf
 
@@ -28,23 +31,21 @@ def lambda_handler(event, context):
         raise e
 
 
-def upload_to_s3(s3_client, infile_obj, infile_info, bucket_name):
+def upload_to_s3(client, obj, info, bucket, folder):
     upload_chunk_size = 1024 * 1000 * 100
     upload_parts = []
-    mpu = s3_client.create_multipart_upload(
-        Bucket=bucket_name,
-        Key='python/' + infile_info.filename)
+    key = os.path.join(folder, info.filename)
+    mpu = client.create_multipart_upload(Bucket=bucket, Key=key)
 
-    for i, infile_part in enumerate(
-            read_in_chunks(infile_obj, upload_chunk_size)):
+    for i, obj_part in enumerate(read_in_chunks(obj, upload_chunk_size)):
         infile_part_num = i + 1
-        print(f'Uploading {infile_info.filename}: part {infile_part_num}')
-        part = s3_client.upload_part(Bucket=bucket_name,
-                                     Key='python/' + infile_info.filename,
-                                     Body=infile_part,
-                                     PartNumber=infile_part_num,
-                                     UploadId=mpu['UploadId']
-                                     )
+
+        print(f'Uploading {info.filename}: part {infile_part_num}')
+
+        part = client.upload_part(Bucket=bucket, Key=key, Body=obj_part,
+                                  PartNumber=infile_part_num,
+                                  UploadId=mpu['UploadId']
+                                  )
         upload_parts.append(part)
 
     part_info = {
@@ -56,10 +57,9 @@ def upload_to_s3(s3_client, infile_obj, infile_info, bucket_name):
         ]
     }
 
-    s3_client.complete_multipart_upload(Bucket=bucket_name,
-                                        Key='python/' + infile_info.filename,
-                                        UploadId=mpu['UploadId'],
-                                        MultipartUpload=part_info)
+    client.complete_multipart_upload(Bucket=bucket, Key=key,
+                                     UploadId=mpu['UploadId'],
+                                     MultipartUpload=part_info)
 
 
 def read_in_chunks(file_object, chunk_size):
