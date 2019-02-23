@@ -32,7 +32,7 @@ def lambda_handler(event, context):
 
 
 def upload_to_s3(client, obj, info, bucket, folder):
-    upload_chunk_size = 1024 * 1000 * 100
+    upload_chunk_size = 1024 * 1000 * 100  # 100MB
     upload_parts = []
     key = os.path.join(folder, info.filename)
     mpu = client.create_multipart_upload(Bucket=bucket, Key=key)
