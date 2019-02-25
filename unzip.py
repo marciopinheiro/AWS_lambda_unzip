@@ -35,31 +35,36 @@ def upload_to_s3(client, obj, info, bucket, folder):
     upload_chunk_size = 1024 * 1000 * 100  # 100MB
     upload_parts = []
     key = os.path.join(folder, info.filename)
-    mpu = client.create_multipart_upload(Bucket=bucket, Key=key)
 
-    for i, obj_part in enumerate(read_in_chunks(obj, upload_chunk_size)):
-        infile_part_num = i + 1
+    if info.file_size <= upload_chunk_size:
+        print(f'Uploading {info.filename}')
+        client.upload_fileobj(Fileobj=obj, Bucket=bucket, Key=key)
+    else:
+        upload = client.create_multipart_upload(Bucket=bucket, Key=key)
 
-        print(f'Uploading {info.filename}: part {infile_part_num}')
+        for i, obj_part in enumerate(read_in_chunks(obj, upload_chunk_size)):
+            infile_part_num = i + 1
 
-        part = client.upload_part(Bucket=bucket, Key=key, Body=obj_part,
-                                  PartNumber=infile_part_num,
-                                  UploadId=mpu['UploadId']
-                                  )
-        upload_parts.append(part)
+            print(f'Uploading {info.filename}: part {infile_part_num}')
 
-    part_info = {
-        'Parts': [
-            {
-                'PartNumber': (i + 1),
-                'ETag': part['ETag']
-            } for i, part in enumerate(upload_parts)
-        ]
-    }
+            part = client.upload_part(Bucket=bucket, Key=key, Body=obj_part,
+                                      PartNumber=infile_part_num,
+                                      UploadId=upload['UploadId']
+                                      )
+            upload_parts.append(part)
 
-    client.complete_multipart_upload(Bucket=bucket, Key=key,
-                                     UploadId=mpu['UploadId'],
-                                     MultipartUpload=part_info)
+        part_info = {
+            'Parts': [
+                {
+                    'PartNumber': (i + 1),
+                    'ETag': part['ETag']
+                } for i, part in enumerate(upload_parts)
+            ]
+        }
+
+        client.complete_multipart_upload(Bucket=bucket, Key=key,
+                                         UploadId=upload['UploadId'],
+                                         MultipartUpload=part_info)
 
 
 def read_in_chunks(file_object, chunk_size):
